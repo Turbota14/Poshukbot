@@ -7,7 +7,7 @@ from flask import Flask
 from threading import Thread
 from datetime import datetime
 
-TOKEN = "ТВОЙ_ТОКЕН_ТУТ"
+TOKEN = "MTM2Mzg0MjM5NDE5MzEzNzc4NQ.GgSKaj.fc6RBABlwonoRL_dfLkB5TBddCCXOyJANx93xE"
 GUILD_NAME = "MRIYA"
 REALM = "Silvermoon"
 OFFICER_ROLE_ID = 968091538053816320
