@@ -87,6 +87,13 @@ async def monitor_mplus_runs():
                         await channel.send(
                             f"🚨 У ключі {dungeon} +{level} знайдено підозрілих гравців: {', '.join(flagged_players)}. {mention}"
                         )
+logging.info(
+    f"Новий ключ:\n"
+    f"Ключ: {keystone['dungeon']} +{keystone['key_level']}\n"
+    f"Гравці: {', '.join(player['name'] for player in keystone['members'])}\n"
+    f"Час: {datetime.utcnow()} UTC\n"
+    f"Сумнівні: {', '.join(suspicious_players) if suspicious_players else 'немає'}"
+)
 
 # ===== Flask Web Server для Render =====
 app = Flask('')
