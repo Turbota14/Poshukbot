@@ -1,17 +1,17 @@
 import os
 import discord
 from discord.ext import commands, tasks
-import requests
 from dotenv import load_dotenv
 from threading import Thread
 from flask import Flask
+import aiohttp
+import asyncio
 
 load_dotenv()
 
 intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True
-intents.message_content = False
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -37,51 +37,56 @@ async def on_ready():
 async def monitor_mplus_runs():
     print("🔍 Перевірка останніх M+ ключів...")
     url = f"https://raider.io/api/v1/guilds/profile?region=eu&realm={REALM}&name={GUILD_NAME}&fields=members"
-    response = requests.get(url)
 
-    if response.status_code != 200:
-        print(f"❌ Не вдалося отримати дані: {response.status_code}")
-        return
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            if response.status != 200:
+                print(f"❌ Не вдалося отримати дані: {response.status}")
+                return
+            data = await response.json()
 
-    data = response.json()
-    members = data.get("members", [])
+        members = data.get("members", [])
 
-    for member in members:
-        char = member["character"]
-        name = char["name"]
-        realm = char.get("realm", "")
-        api_url = f"https://raider.io/api/v1/characters/profile?region=eu&realm={realm}&name={name}&fields=mythic_plus_recent_runs"
-        char_response = requests.get(api_url)
+        for member in members:
+            char = member["character"]
+            name = char["name"]
+            realm = char.get("realm", "")
+            api_url = f"https://raider.io/api/v1/characters/profile?region=eu&realm={realm}&name={name}&fields=mythic_plus_recent_runs"
 
-        if char_response.status_code != 200:
-            continue
-
-        char_data = char_response.json()
-        runs = char_data.get("mythic_plus_recent_runs", [])
-
-        for run in runs:
-            run_id = run.get("run_id")
-            if not run_id or run_id in checked_runs:
+            try:
+                async with session.get(api_url) as char_response:
+                    if char_response.status != 200:
+                        continue
+                    char_data = await char_response.json()
+            except Exception as e:
+                print(f"⚠️ Помилка при запиті до {name}: {e}")
                 continue
 
-            checked_runs.add(run_id)
-            flagged_players = []
+            runs = char_data.get("mythic_plus_recent_runs", [])
+            for run in runs:
+                run_id = run.get("run_id")
+                if not run_id or run_id in checked_runs:
+                    continue
 
-            for player in run.get("roster", []):
-                player_name = player.get("character", {}).get("name", "")
-                player_realm = player.get("character", {}).get("realm", "").lower()
-                if has_cyrillic(player_name) or "ru" in player_realm:
-                    flagged_players.append(f"{player_name} ({player_realm})")
+                checked_runs.add(run_id)
+                flagged_players = []
 
-            if flagged_players:
-                channel = bot.get_channel(DISCORD_CHANNEL_ID)
-                if channel:
-                    mention = f"<@&{OFFICER_ROLE_ID}>"
-                    dungeon = run.get("dungeon", "Невідомо")
-                    level = run.get("mythic_level", "?")
-                    await channel.send(
-                        f"🚨 У ключі {dungeon} +{level} знайдено підозрілих гравців: {', '.join(flagged_players)}. {mention}"
-                    )
+                for player in run.get("roster", []):
+                    player_info = player.get("character", {})
+                    player_name = player_info.get("name", "")
+                    player_realm = player_info.get("realm", "").lower()
+                    if has_cyrillic(player_name) or "ru" in player_realm:
+                        flagged_players.append(f"{player_name} ({player_realm})")
+
+                if flagged_players:
+                    channel = bot.get_channel(DISCORD_CHANNEL_ID)
+                    if channel:
+                        mention = f"<@&{OFFICER_ROLE_ID}>"
+                        dungeon = run.get("dungeon", "Невідомо")
+                        level = run.get("mythic_level", "?")
+                        await channel.send(
+                            f"🚨 У ключі {dungeon} +{level} знайдено підозрілих гравців: {', '.join(flagged_players)}. {mention}"
+                        )
 
 # ===== Flask Web Server для Render =====
 app = Flask('')
