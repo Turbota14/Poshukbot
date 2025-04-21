@@ -1,71 +1,77 @@
+import os
 import discord
 from discord.ext import commands, tasks
 import requests
-import re
-import os
 from dotenv import load_dotenv
+from threading import Thread
+from flask import Flask
 
 load_dotenv()
 
-TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID"))
+intents = discord.Intents.default()
+intents.guilds = True
+intents.members = True
+intents.message_content = False
+
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 GUILD_NAME = "MRIYA"
 REALM = "Silvermoon"
-REGION = "eu"
+OFFICER_ROLE_ID = 968091538053816320
+DISCORD_CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID"))
 
-RUSSIAN_REALMS = [
-    "Гордунни", "Ревущий фьорд", "Свежеватель Душ",
-    "Ясеневый лес", "Пиратская бухта", "Азурегос", "Разувий",
-    "Термоштепсель", "Галакронд", "Дракономор", "Черный Шрам"
-]
-
-intents = discord.Intents.default()
-bot = commands.Bot(command_prefix="!", intents=intents)
+def has_cyrillic(text):
+    return any('\u0400' <= c <= '\u04FF' for c in text)
 
 @bot.event
 async def on_ready():
-    print(f"✅ Logged in as {bot.user}")
-    monitor_keys.start()
+    print(f'✅ Бот запущено як {bot.user}')
+    channel = bot.get_channel(DISCORD_CHANNEL_ID)
+    if channel:
+        await channel.send("✅ Бот запущено! Готовий до моніторингу гільдії.")
+    monitor_guild.start()
 
 @tasks.loop(minutes=5)
-async def monitor_keys():
-    channel = bot.get_channel(CHANNEL_ID)
-    print("🔍 Checking keys...")
-
-    url = f"https://raider.io/api/v1/guilds/profile?region={REGION}&realm={REALM}&name={GUILD_NAME}&fields=mythic_plus_recent_runs"
+async def monitor_guild():
+    print("🔍 Перевірка гільдії...")
+    url = f"https://raider.io/api/v1/guilds/profile?region=eu&realm={REALM}&name={GUILD_NAME}&fields=members"
     response = requests.get(url)
 
-    if response.status_code != 200:
-        await channel.send("⚠️ Raider.IO API unavailable")
-        return
+    if response.status_code == 200:
+        data = response.json()
+        members = data.get("members", [])
 
-    data = response.json()
-    runs = data.get("mythic_plus_recent_runs", [])
+        flagged = []
+        for member in members:
+            char = member["character"]
+            name = char["name"]
+            realm = char.get("realm", "").lower()
 
-    flagged_runs = []
+            if has_cyrillic(name) or "ru" in realm:
+                flagged.append(f"{name} ({realm})")
 
-    for run in runs:
-        for player in run.get("roster", []):
-            char = player.get("character", {})
-            name = char.get("name", "")
-            realm = char.get("realm", "")
-
-            if realm in RUSSIAN_REALMS or re.search(r'[а-яА-ЯёЁ]', name):
-                flagged_runs.append({
-                    "dungeon": run.get("dungeon"),
-                    "level": run.get("mythic_level"),
-                    "url": run.get("url"),
-                    "offender": f"{name}-{realm}"
-                })
-                break
-
-    if flagged_runs:
-        msg = f"🚨 **Знайдено підозрілих гравців у M+ ключах!** <@&968091538053816320>"
-        for f in flagged_runs:
-            msg += f"\n🔸 [{f['dungeon']} +{f['level']}]({f['url']}) — `{f['offender']}`"
-        await channel.send(msg)
+        if flagged:
+            channel = bot.get_channel(DISCORD_CHANNEL_ID)
+            if channel:
+                mention = f"<@&{OFFICER_ROLE_ID}>"
+                flagged_list = ", ".join(flagged)
+                await channel.send(
+                    f"🚨 У гільдії {GUILD_NAME} на {REALM} знайдено підозрілі імена або RU реалми: {flagged_list}. {mention}"
+                )
     else:
-        print("✅ No suspicious players found.")
+        print(f"❌ Не вдалося отримати дані: {response.status_code}")
 
-bot.run(TOKEN)
+# ===== Flask Web Server для Render =====
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Бот працює! 🟢"
+
+def run():
+    app.run(host='0.0.0.0', port=8080)
+
+Thread(target=run).start()
+
+# Запуск бота
+bot.run(os.getenv("DISCORD_BOT_TOKEN"))
